@@ -173,6 +173,15 @@ const BRANDS = {
 const phaseOrder = ["Save the Date","Save the date","Lead Gen","Pre-Sale","Loyalty","Super Early Bird","Early Bird","Regular","Waitlist"];
 const PALETTE = ["#378ADD","#4A6657","#FF6A3D","#C77DFF","#6FCF97","#E8694A"];
 
+// Extract event year from Event Name (e.g. "REDLINE 2027" → "2027")
+// Falls back to Year column if no year found in Event Name
+function getEventYear(r){
+  const name = (r['Event Name']||'').toString();
+  const m = name.match(/\b(20\d{2})\b/);
+  if(m) return m[1];
+  return String(r['Year']||'');
+}
+
 let brandData = {}; // {tsr:{rows:[...], settings:{...}}, rl:{rows:[...], settings:{...}}}
 let chartInstances = {}; // keyed by canvas id
 
@@ -232,7 +241,7 @@ async function loadAll(){
 /* =================== SHARED CALC HELPERS =================== */
 
 function computeBrandYearMetrics(rows, year, brandKey, settings){
-  const yr = rows.filter(r => String(r['Year']) === String(year));
+  const yr = rows.filter(r => getEventYear(r) === String(year));
   const regTickets = yr.reduce((a,r)=>a+(parseInt(r['Ticket Count'])||0),0);
   const regRev = yr.reduce((a,r)=>a+(parseFloat(r['Registration Rev'])||0),0);
   const prodRev = yr.reduce((a,r)=>a+(parseFloat(r['Products Rev'])||0),0);
@@ -317,7 +326,7 @@ function renderOverview(){
     const rows = countryVal==='all' ? data.rows : data.rows.filter(r=>r['Country']===countryVal);
     if(rows.length === 0) return; // hide if no data for selected country
 
-    const years = [...new Set(rows.map(r=>String(r['Year'])))].sort();
+    const years = [...new Set(rows.map(r=>getEventYear(r)))].sort();
     const latestYear = years[years.length-1];
     const prevYear = years.length>1 ? years[years.length-2] : null;
     const curr = computeBrandYearMetrics(rows, latestYear, b.key, data.settings);
@@ -352,12 +361,13 @@ function brandPageHTML(brandKey){
 
     <div style="margin-bottom:14px;">
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-        <label style="margin:0; font-size:12px; color:var(--text-dim);">Viewing year</label><select id="yearFilter_${brandKey}"></select>
-        <label style="margin:0 0 0 8px; font-size:12px; color:var(--text-dim);">Compare vs</label><select id="compareYearFilter_${brandKey}"></select>
+        <label style="margin:0; font-size:12px; color:var(--text-dim);">Viewing event year</label><select id="yearFilter_${brandKey}"></select>
+        <label style="margin:0 0 0 8px; font-size:12px; color:var(--text-dim);">Compare event year</label><select id="compareYearFilter_${brandKey}"></select>
       </div>
-      <div style="display:flex; gap:10px; align-items:center;">
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px;">
         <label style="margin:0; font-size:12px; color:var(--text-dim);">Country</label><select id="countryFilter_${brandKey}"></select>
       </div>
+      <p style="font-size:11px; color:var(--text-dim); margin:0; font-style:italic;">* Year refers to the event year (from Event Name), not the calendar year of registration. A ticket sold in Dec 2026 for a 2027 event appears under 2027.</p>
     </div>
 
     <details class="settings" id="settingsPanel_${brandKey}">
@@ -504,7 +514,7 @@ function srRowsFor(brandKey){
 
 function populateYearFilters(brandKey){
   const rows = srRowsFor(brandKey);
-  const years = [...new Set(rows.map(r=>String(r['Year'])))].sort();
+  const years = [...new Set(rows.map(r=>getEventYear(r)))].sort();
   const yf = document.getElementById('yearFilter_'+brandKey);
   const cf = document.getElementById('compareYearFilter_'+brandKey);
   const prevYF = yf.value, prevCF = cf.value;
@@ -516,7 +526,7 @@ function populateYearFilters(brandKey){
 }
 
 function isLatestYear(brandKey, year){
-  const years = [...new Set(srRowsFor(brandKey).map(r=>String(r['Year'])))].sort();
+  const years = [...new Set(srRowsFor(brandKey).map(r=>getEventYear(r)))].sort();
   return String(year) === years[years.length-1];
 }
 
@@ -622,7 +632,7 @@ function renderSRBody(brandKey){
 /* ---- Phase performance table ---- */
 
 function computePhaseBreakdown(rows, year){
-  const yr = rows.filter(r=>String(r['Year'])===String(year));
+  const yr = rows.filter(r=>getEventYear(r)===String(year));
   const phases = {};
   yr.forEach(r=>{
     const p = r['Phase']; if(!p) return;
@@ -674,7 +684,7 @@ function renderPhaseTable(brandKey, rows, year, compareYear){
 /* ---- Sub-event breakdown table (reg+unreg, per sub-event) ---- */
 
 function computeSubEventBreakdown(rows, year, brandKey, settings){
-  const yr = rows.filter(r=>String(r['Year'])===String(year));
+  const yr = rows.filter(r=>getEventYear(r)===String(year));
   const subEvents = {};
   const isOne = v => v===1 || v==='1' || v===true || Number(v)===1;
   const teamCatField = brandKey==='tsr' ? 'Team Category' : 'Double/ Team Category';
@@ -753,13 +763,17 @@ function renderSubEventTable(brandKey, rows, year, compareYear, settings){
   }
 
   // define group order and labels
-  const groupOrder = brandKey==='tsr' ? ['Individual','Team'] : ['Singles','Doubles','Team Relay'];
+  const groupOrder = brandKey==='tsr' ? ['Individual','Team'] : brandKey==='rl' ? ['Singles','Doubles','Team Relay'] : ['Individual'];
   const subtotalLabels = brandKey==='tsr'
     ? {Individual:'TOTAL INDIVIDUALS', Team:'TOTAL TEAMS'}
-    : {Singles:'TOTAL SINGLES', Doubles:'TOTAL DOUBLES', 'Team Relay':'TOTAL TEAM RELAYS'};
+    : brandKey==='rl'
+    ? {Singles:'TOTAL SINGLES', Doubles:'TOTAL DOUBLES', 'Team Relay':'TOTAL TEAM RELAYS'}
+    : {Individual:'TOTAL'};
   const pctLabels = brandKey==='tsr'
     ? {Individual:'INDIVIDUALS %', Team:'TEAMS %'}
-    : {Singles:'SINGLES %', Doubles:'DOUBLES %', 'Team Relay':'TEAM RELAYS %'};
+    : brandKey==='rl'
+    ? {Singles:'SINGLES %', Doubles:'DOUBLES %', 'Team Relay':'TEAM RELAYS %'}
+    : {Individual:''}; // no % row for TMR (only 1 group)
 
   // group sub-events
   const grouped = {};
@@ -840,7 +854,7 @@ function renderSubEventTable(brandKey, rows, year, compareYear, settings){
       html += rowHtml(se, currVal, cmpVal, false, false, 0, 0);
     });
     html += rowHtml(subtotalLabels[group], subtotalCurr, subtotalCmp, true, false, 0, 0);
-    html += rowHtml(pctLabels[group], subtotalCurr, subtotalCmp, false, true, grandCurr, grandCmp);
+    if(pctLabels[group]) html += rowHtml(pctLabels[group], subtotalCurr, subtotalCmp, false, true, grandCurr, grandCmp);
   });
 
   html += rowHtml('GRAND TOTAL', grandCurr, grandCmp, true, false, 0, 0);
@@ -851,7 +865,7 @@ function renderSubEventTable(brandKey, rows, year, compareYear, settings){
 /* ---- Gender category breakdown (Mixed/Women/Men) ---- */
 
 function computeGenderBreakdown(rows, year, brandKey){
-  const yr = rows.filter(r=>String(r['Year'])===String(year));
+  const yr = rows.filter(r=>getEventYear(r)===String(year));
   const catField = brandKey==='tsr' ? 'Team Category' : 'Double/ Team Category';
   const groups = {}; // groupLabel(e.g. "Team" or "Doubles"/"Team Relay") -> {Mixed:n, Women:n, Men:n}
 
@@ -926,8 +940,8 @@ function renderAudienceProfile(brandKey, rows, year, compareYear){
   const audienceCat = document.getElementById('audienceCatFilter_'+brandKey) ? document.getElementById('audienceCatFilter_'+brandKey).value : 'all';
   const filterRows = r => audienceCat==='all' || r['Category']===audienceCat;
 
-  const yr = rows.filter(r=>String(r['Year'])===String(year) && filterRows(r));
-  const cmpYr = compareYear ? rows.filter(r=>String(r['Year'])===String(compareYear) && filterRows(r)) : null;
+  const yr = rows.filter(r=>getEventYear(r)===String(year) && filterRows(r));
+  const cmpYr = compareYear ? rows.filter(r=>getEventYear(r)===String(compareYear) && filterRows(r)) : null;
   const hasCompare = !!cmpYr && cmpYr.length > 0;
 
   function getGenderMap(data){
@@ -1115,14 +1129,14 @@ function renderCohortTable(brandKey, rows){
   const firstSeen = {};
   rows.forEach(r=>{
     const email = r[emailKey];
-    const yr = parseInt(r['Year']);
+    const yr = parseInt(getEventYear(r));
     if(!email || !yr) return;
     if(!firstSeen[email] || yr < firstSeen[email]) firstSeen[email] = yr;
   });
   const emailsByYear = {};
   rows.forEach(r=>{
     const email = r[emailKey];
-    const yr = parseInt(r['Year']);
+    const yr = parseInt(getEventYear(r));
     if(!email || !yr) return;
     if(!emailsByYear[yr]) emailsByYear[yr] = new Set();
     emailsByYear[yr].add(email);
@@ -1160,7 +1174,7 @@ function renderCohortTable(brandKey, rows){
 function dayKey(dateStr){ return new Date(dateStr); }
 
 function buildDailySeries(rows, year, cat){
-  const yr = filteredByCategory(rows.filter(r=>String(r['Year'])===String(year)), cat);
+  const yr = filteredByCategory(rows.filter(r=>getEventYear(r)===String(year)), cat);
   const dated = yr.map(r=>({date:dayKey(r['Date cleaned (DD/MM/YYYY)']), tickets:parseInt(r['Ticket Count'])||0})).filter(r=>!isNaN(r.date));
   dated.sort((a,b)=>a.date-b.date);
   const start = dated.length?dated[0].date:new Date();
@@ -1221,7 +1235,7 @@ function renderDailyDeltaChart(brandKey, rows, year, compareYear, cat){
 }
 
 function renderPaceChart(brandKey, rows, year, settings){
-  const yr = rows.filter(r=>String(r['Year'])===String(year));
+  const yr = rows.filter(r=>getEventYear(r)===String(year));
   const dated = yr.map(r=>({date:dayKey(r['Date cleaned (DD/MM/YYYY)']), tickets:parseInt(r['Ticket Count'])||0})).filter(r=>!isNaN(r.date));
   dated.sort((a,b)=>a.date-b.date);
   const start = dated.length?dated[0].date:new Date();
