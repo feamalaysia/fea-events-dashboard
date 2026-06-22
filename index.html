@@ -194,23 +194,24 @@ function computeBrandYearMetrics(rows, year, brandKey, settings){
   const totalRev = regRev + prodRev;
 
   let unreg = 0;
+  const isOne = v => v===1 || v==='1' || v===true || Number(v)===1;
   if(brandKey === 'tsr'){
     const mpt = settings && settings.membersPerTeam ? parseInt(settings.membersPerTeam) : 2;
     const teamRows = yr.filter(r => r['Category']==='Team');
-    const teamsFormed = teamRows.filter(r => parseInt(r['Team Captain'])===1).length;
-    const registeredTeamMembers = teamRows.filter(r => parseInt(r['Team Member'])===1).length;
+    const teamsFormed = teamRows.filter(r => isOne(r['Team Captain'])).length;
+    const registeredTeamMembers = teamRows.filter(r => isOne(r['Team Member'])).length;
     unreg = Math.max(0, teamsFormed*mpt - registeredTeamMembers);
   } else if(brandKey === 'rl'){
     const dm = settings && settings.doublesMembers ? parseInt(settings.doublesMembers) : 1;
     const trm = settings && settings.teamRelayMembers ? parseInt(settings.teamRelayMembers) : 3;
     const doublesRows = yr.filter(r => r['Category']==='Doubles');
-    const doublesTeams = doublesRows.filter(r => parseInt(r['Doubles Captain'])===1).length;
-    const doublesRegMembers = doublesRows.filter(r => parseInt(r['Doubles Member'])===1).length;
+    const doublesTeams = doublesRows.filter(r => isOne(r['Doubles Captain'])).length;
+    const doublesRegMembers = doublesRows.filter(r => isOne(r['Doubles Member'])).length;
     const unregDoubles = Math.max(0, doublesTeams*dm - doublesRegMembers);
 
     const relayRows = yr.filter(r => r['Category']==='Team Relay');
-    const relayTeams = relayRows.filter(r => parseInt(r['Team Relay Captain'])===1).length;
-    const relayRegMembers = relayRows.filter(r => parseInt(r['Team Relay Member'])===1).length;
+    const relayTeams = relayRows.filter(r => isOne(r['Team Relay Captain'])).length;
+    const relayRegMembers = relayRows.filter(r => isOne(r['Team Relay Member'])).length;
     const unregRelay = Math.max(0, relayTeams*trm - relayRegMembers);
 
     unreg = unregDoubles + unregRelay;
@@ -619,16 +620,17 @@ function computeSubEventBreakdown(rows, year, brandKey, settings){
 
   // second pass: for MEMBER sub-events, override with captain × membersPerTeam
   // identify captain sub-events by checking for captain rows
+  const isOne = v => v===1 || v==='1' || v===true || Number(v)===1;
   const captainSubEvents = {}; // track captain counts from captain sub-events
   yr.forEach(r=>{
     const se = r['Sub-Event']; if(!se) return;
-    if(brandKey==='tsr' && parseInt(r['Team Captain'])===1){
+    if(brandKey==='tsr' && isOne(r['Team Captain'])){
       captainSubEvents['tsr_team'] = (captainSubEvents['tsr_team']||0) + 1;
     }
-    if(brandKey==='rl' && parseInt(r['Doubles Captain'])===1){
+    if(brandKey==='rl' && isOne(r['Doubles Captain'])){
       captainSubEvents['rl_doubles'] = (captainSubEvents['rl_doubles']||0) + 1;
     }
-    if(brandKey==='rl' && parseInt(r['Team Relay Captain'])===1){
+    if(brandKey==='rl' && isOne(r['Team Relay Captain'])){
       captainSubEvents['rl_relay'] = (captainSubEvents['rl_relay']||0) + 1;
     }
   });
@@ -639,25 +641,23 @@ function computeSubEventBreakdown(rows, year, brandKey, settings){
 
     if(brandKey==='tsr' && cat==='Team'){
       const mpt = settings && settings.membersPerTeam ? parseInt(settings.membersPerTeam) : 2;
-      // is this a member sub-event? check if it has member rows but no captain rows
       const se_rows = yr.filter(r=>r['Sub-Event']===se);
-      const hasCaptains = se_rows.some(r=>parseInt(r['Team Captain'])===1);
-      const hasMembers = se_rows.some(r=>parseInt(r['Team Member'])===1) || (!hasCaptains && cat==='Team');
+      const hasCaptains = se_rows.some(r=>isOne(r['Team Captain']));
+      const hasMembers = se_rows.some(r=>isOne(r['Team Member'])) || (!hasCaptains && cat==='Team');
       if(!hasCaptains && hasMembers){
-        // member row: show captains × membersPerTeam
         totalRegUnreg = (captainSubEvents['tsr_team']||0) * mpt;
       }
     } else if(brandKey==='rl' && cat==='Doubles'){
       const dm = settings && settings.doublesMembers ? parseInt(settings.doublesMembers) : 1;
       const se_rows = yr.filter(r=>r['Sub-Event']===se);
-      const hasCaptains = se_rows.some(r=>parseInt(r['Doubles Captain'])===1);
+      const hasCaptains = se_rows.some(r=>isOne(r['Doubles Captain']));
       if(!hasCaptains){
         totalRegUnreg = (captainSubEvents['rl_doubles']||0) * dm;
       }
     } else if(brandKey==='rl' && cat==='Team Relay'){
       const trm = settings && settings.teamRelayMembers ? parseInt(settings.teamRelayMembers) : 3;
       const se_rows = yr.filter(r=>r['Sub-Event']===se);
-      const hasCaptains = se_rows.some(r=>parseInt(r['Team Relay Captain'])===1);
+      const hasCaptains = se_rows.some(r=>isOne(r['Team Relay Captain']));
       if(!hasCaptains){
         totalRegUnreg = (captainSubEvents['rl_relay']||0) * trm;
       }
