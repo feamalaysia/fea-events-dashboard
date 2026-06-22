@@ -367,9 +367,7 @@ function brandPageHTML(brandKey){
 
     <div class="panel"><h2>Phase performance</h2><div class="table-scroll" id="phaseTable_${brandKey}"></div></div>
 
-    <div class="panel"><h2>Sub-event breakdown</h2><div class="table-scroll" id="subEventTable_${brandKey}"></div></div>
-
-    <div class="panel"><h2>${brandKey==='tsr' ? 'Team category breakdown (Mixed / Women / Men)' : 'Doubles & Team Relay category breakdown (Mixed / Women / Men)'}</h2><div class="table-scroll" id="genderTable_${brandKey}"></div></div>
+    <div class="panel"><h2>Sub-event breakdown (Reg + Unreg)</h2><div class="table-scroll" id="subEventTable_${brandKey}"></div></div>
 
     <div class="panel" id="cohortPanel_${brandKey}"><h2>Cohort retention</h2><div id="cohortTable_${brandKey}"></div></div>
 
@@ -582,7 +580,6 @@ function renderSRBody(brandKey){
 
   renderPhaseTable(brandKey, rows, year, compareYear);
   renderSubEventTable(brandKey, rows, year, compareYear, settings);
-  renderGenderTable(brandKey, rows, year, compareYear);
   renderCohortTable(brandKey, rows);
   renderAudienceProfile(brandKey, rows, year, compareYear);
   renderCumChart(brandKey, rows, year, compareYear, document.getElementById('catFilter1_'+brandKey).value);
