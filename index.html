@@ -519,7 +519,6 @@ function renderBrandPage(brandKey){
   populateYearFilters(brandKey);
 
   const s = data.settings;
-  if(yrEl.value === "" && s.year) yrEl.value = s.year;
   if(brandKey==='tsr'){
     const mptEl = document.getElementById('membersPerTeam_tsr');
     if(mptEl && mptEl.value === "" && s.membersPerTeam) mptEl.value = s.membersPerTeam;
