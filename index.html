@@ -64,6 +64,9 @@
 
   .brand-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
   @media (max-width:700px){ .brand-grid{grid-template-columns:1fr;} }
+  .overview-brand-row{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; align-items:start;}
+  @media (max-width:700px){ .overview-brand-row{grid-template-columns:1fr;} }
+  .overview-yoy-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
   .brand-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
   .brand-card.empty{opacity:0.55;}
   .brand-card h3{margin:0 0 2px; font-size:17px;}
@@ -142,7 +145,7 @@
     <img src="images/FE_logo_Master_White%20BG_RGB_white%20text.png" alt="Fresh Events" style="height:80px; width:auto; object-fit:contain; display:block; margin-top:24px; margin-bottom:8px;">
     <div class="sub">All brands · most recent event year vs previous year</div>
     <div class="status"><span id="statusLineOverview">Loading…</span><button class="secondary" onclick="loadAll()">Refresh</button></div>
-    <div class="brand-grid" id="brandGrid"></div>
+    <div id="brandGrid"></div>
   </div>
 
   <!-- ===================== TEMPLATE: rendered for both TSR and RL ===================== -->
@@ -317,7 +320,7 @@ function renderOverview(){
   brandList.forEach(b=>{
     const data = brandData[b.key];
     if(!data || data.rows.length === 0){
-      grid.innerHTML += `<div class="brand-card empty"><h3>${b.label}</h3><span class="nodata-tag">No data yet</span></div>`;
+      grid.innerHTML += `<div class="overview-brand-row"><div class="brand-card empty"><h3>${b.label}</h3><span class="nodata-tag">No data yet</span></div><div></div></div>`;
       return;
     }
 
@@ -329,7 +332,7 @@ function renderOverview(){
     const countryOpts = '<option value="all">All</option>' + countries.map(c=>`<option value="${c}"${c===selectedCountry?' selected':''}>${c}</option>`).join('');
 
     const filteredRows = selectedCountry==='all' ? data.rows : data.rows.filter(r=>r['Country']===selectedCountry);
-    const years = [...new Set(data.rows.map(r=>getEventYear(r)))].sort();
+    const years = [...new Set(data.rows.map(r=>getEventYear(r)).filter(Boolean))].sort();
     const latestYear = years[years.length-1];
     const prevYear = years.length>1 ? years[years.length-2] : null;
 
@@ -337,13 +340,13 @@ function renderOverview(){
     const prevRows = prevYear ? filteredRows.filter(r=>getEventYear(r)===String(prevYear)) : null;
 
     if(currRows.length === 0){
-      grid.innerHTML += `<div class="brand-card">
+      grid.innerHTML += `<div class="overview-brand-row"><div class="brand-card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <h3 style="margin:0;">${b.label}</h3>
           <select id="${countryId}" onchange="renderOverview()" style="font-size:12px; padding:3px 6px;">${countryOpts}</select>
         </div>
         <span class="nodata-tag">No data for selected country</span>
-      </div>`;
+      </div><div></div></div>`;
       return;
     }
 
@@ -354,18 +357,101 @@ function renderOverview(){
       const prevStr = (prevVal!==null && prevVal!==undefined) ? ` <span class="bprev">(${fmt(prevVal)})</span>` : '';
       return `<div class="brand-metric-row"><span class="bl">${label}</span><div class="bvals"><span class="bv">${fmt(currVal)}</span>${deltaSpan(currVal, prevVal)}${prevStr}</div></div>`;
     }
-    grid.innerHTML += `<div class="brand-card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-        <h3 style="margin:0;">${b.label}</h3>
-        <select id="${countryId}" onchange="renderOverview()" style="font-size:12px; padding:3px 6px;">${countryOpts}</select>
+
+    grid.innerHTML += `<div class="overview-brand-row">
+      <div class="brand-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <h3 style="margin:0;">${b.label}</h3>
+          <select id="${countryId}" onchange="renderOverview()" style="font-size:12px; padding:3px 6px;">${countryOpts}</select>
+        </div>
+        <div class="yr">Event year ${latestYear}${prevYear?' vs '+prevYear:' (no prior year)'}</div>
+        ${row('Tickets sold (reg+unreg)', curr.totalTicketsRegUnreg, prev?prev.totalTicketsRegUnreg:null, fmtNum)}
+        ${row('Registered tickets', curr.regTickets, prev?prev.regTickets:null, fmtNum)}
+        ${row('Total revenue', curr.totalRev, prev?prev.totalRev:null, fmtMoney)}
+        ${row('Ticket revenue', curr.regRev, prev?prev.regRev:null, fmtMoney)}
+        ${row('Add-on revenue', curr.prodRev, prev?prev.prodRev:null, fmtMoney)}
       </div>
-      <div class="yr">Event year ${latestYear}${prevYear?' vs '+prevYear:' (no prior year)'}</div>
-      ${row('Tickets sold (reg+unreg)', curr.totalTicketsRegUnreg, prev?prev.totalTicketsRegUnreg:null, fmtNum)}
-      ${row('Registered tickets', curr.regTickets, prev?prev.regTickets:null, fmtNum)}
-      ${row('Total revenue', curr.totalRev, prev?prev.totalRev:null, fmtMoney)}
-      ${row('Ticket revenue', curr.regRev, prev?prev.regRev:null, fmtMoney)}
-      ${row('Add-on revenue', curr.prodRev, prev?prev.prodRev:null, fmtMoney)}
+      <div class="overview-yoy-panel">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); margin-bottom:12px;">Year-on-Year — All Years</div>
+        <div style="position:relative; height:220px;"><canvas id="yoyChart_${b.key}"></canvas></div>
+      </div>
     </div>`;
+
+    // render YOY chart after DOM is updated
+    setTimeout(()=>renderYOYChart(b.key, filteredRows, years, data.settings), 0);
+  });
+}
+
+function renderYOYChart(brandKey, rows, years, settings){
+  const ctx = document.getElementById('yoyChart_'+brandKey);
+  if(!ctx) return;
+  destroyChart('yoyChart_'+brandKey);
+
+  const revData = [], ticketData = [];
+  years.forEach(yr=>{
+    const yrRows = rows.filter(r=>getEventYear(r)===String(yr));
+    const m = computeBrandYearMetrics(yrRows, yr, brandKey, settings);
+    revData.push(m.totalRev);
+    ticketData.push(m.totalTicketsRegUnreg);
+  });
+
+  chartInstances['yoyChart_'+brandKey] = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: years,
+      datasets:[
+        {
+          label:'Total Revenue (RM)',
+          data: revData,
+          backgroundColor:'rgba(55,138,221,0.75)',
+          borderRadius:4,
+          yAxisID:'yRev',
+          order:2
+        },
+        {
+          label:'Total Tickets (Reg+Unreg)',
+          data: ticketData,
+          type:'line',
+          borderColor:'#FF6A3D',
+          backgroundColor:'rgba(255,106,61,0.15)',
+          borderWidth:2,
+          pointRadius:4,
+          pointBackgroundColor:'#FF6A3D',
+          fill:false,
+          yAxisID:'yTickets',
+          tension:0.3,
+          order:1
+        }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{display:true, labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12, padding:10}},
+        tooltip:{callbacks:{
+          label: ctx=>{
+            if(ctx.dataset.yAxisID==='yRev') return ` Revenue: ${fmtMoney(ctx.parsed.y)}`;
+            return ` Tickets: ${fmtNum(ctx.parsed.y)}`;
+          }
+        }}
+      },
+      scales:{
+        x:{ticks:{color:'#EAF2EC', font:{size:12}}, grid:{display:false}},
+        yRev:{
+          position:'left',
+          ticks:{color:'#378ADD', callback:v=>'RM'+fmtNum(v)},
+          grid:{color:'rgba(143,169,153,0.15)'},
+          title:{display:true, text:'Revenue (RM)', color:'#378ADD', font:{size:10}}
+        },
+        yTickets:{
+          position:'right',
+          ticks:{color:'#FF6A3D', callback:v=>fmtNum(v)},
+          grid:{display:false},
+          title:{display:true, text:'Tickets', color:'#FF6A3D', font:{size:10}}
+        }
+      }
+    }
   });
 }
 
@@ -421,7 +507,7 @@ function brandPageHTML(brandKey){
 
     <div class="panel" ${brandKey==='tmr' ? 'style="display:none;"' : ''}><h2>Sub-event breakdown (Reg + Unreg)</h2><div class="table-scroll" id="subEventTable_${brandKey}"></div></div>
 
-    <div class="panel" id="cohortPanel_${brandKey}"><h2>Cohort retention</h2><div id="cohortTable_${brandKey}"></div></div>
+    <div class="panel" id="cohortPanel_${brandKey}"><h2>Cohort retention</h2><div id="cohortTable_${brandKey}" style="overflow-x:auto; -webkit-overflow-scrolling:touch;"></div></div>
 
     <div class="panel">
       <div class="panel-head">
@@ -475,6 +561,10 @@ function brandPageHTML(brandKey){
       <div class="panel" style="margin-bottom:0;">
         <h2>Nationality (Top 10)</h2>
         <div style="position:relative; height:240px;"><canvas id="nationalityChart_${brandKey}"></canvas></div>
+      </div>
+      <div class="panel" style="margin-bottom:0;">
+        <h2>State (Top 10)</h2>
+        <div style="position:relative; height:240px;"><canvas id="stateChart_${brandKey}"></canvas></div>
       </div>
     </div>
   `;
@@ -1264,6 +1354,55 @@ function renderAudienceProfile(brandKey, viewRows, cmpRows, year, compareYear){
       }
     }
   });
+
+  // ---- State chart ----
+  function getStateMap(data){
+    const m = {};
+    data.forEach(r=>{
+      const s = (r['State']||'').toString().trim();
+      if(!s) return;
+      m[s] = (m[s]||0) + (parseInt(r['Ticket Count'])||1);
+    });
+    return m;
+  }
+
+  const stateMap = getStateMap(yr);
+  const cmpStateMap = cmpYr ? getStateMap(cmpYr) : null;
+  const sortedState = Object.entries(stateMap).sort((a,b)=>b[1]-a[1]);
+  const top10State = sortedState.slice(0,10);
+  const stateLabels = top10State.map(e=>e[0]);
+  const stateVals = top10State.map(e=>e[1]);
+  const stateTotal = stateVals.reduce((a,b)=>a+b,0);
+  const sCtx = document.getElementById('stateChart_'+brandKey);
+  destroyChart('stateChart_'+brandKey);
+
+  const stateDatasets = [{label:String(year), data:stateVals, backgroundColor:'#6FCF97', borderRadius:4}];
+  if(hasCompare && cmpStateMap){
+    const cmpStateVals = stateLabels.map(l=>cmpStateMap[l]||0);
+    stateDatasets.push({label:String(compareYear), data:cmpStateVals, backgroundColor:'#4A6657', borderRadius:4});
+  }
+  const cmpStateTotal = hasCompare && cmpStateMap ? Object.values(cmpStateMap).reduce((a,b)=>a+b,0) : 0;
+  const stateTotals = [stateTotal, cmpStateTotal];
+
+  chartInstances['stateChart_'+brandKey] = new Chart(sCtx, {
+    type:'bar',
+    data:{labels:stateLabels, datasets:stateDatasets},
+    options:{
+      indexAxis:'y',
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{display:hasCompare, labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}},
+        tooltip:{callbacks:{label: ctx=>{
+          const total = stateTotals[ctx.datasetIndex] || stateTotal;
+          return ` ${ctx.dataset.label}: ${fmtNum(ctx.parsed.x)} (${total?(ctx.parsed.x/total*100).toFixed(1):0}%)`;
+        }}}
+      },
+      scales:{
+        x:{ticks:{color:'#8FA999', callback:v=>fmtNum(v)}, grid:{color:'rgba(143,169,153,0.15)'}},
+        y:{ticks:{color:'#EAF2EC', font:{size:11}}, grid:{display:false}}
+      }
+    }
+  });
 }
 
 /* ---- Cohort retention ---- */
@@ -1290,7 +1429,7 @@ function renderCohortTable(brandKey, rows, country){
   const allYears = Object.keys(emailsByYear).map(Number).sort((a,b)=>a-b);
   const maxOffset = allYears.length - 1;
 
-  let html = '<div class="table-scroll"><table><thead><tr><th>Cohort</th><th>Total that year</th><th>New (cohort)</th>';
+  html += '<div style="overflow-x:auto; -webkit-overflow-scrolling:touch;"><table style="min-width:500px;"><thead><tr><th>Cohort</th><th>Total that year</th><th>New (cohort)</th>';
   for(let off=1; off<=maxOffset; off++){
     html += `<th>Year ${off+1}</th>`;
   }
