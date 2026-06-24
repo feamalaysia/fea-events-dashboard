@@ -751,9 +751,13 @@ function renderSRBody(brandKey){
     const phasesWithTarget = (settings.phases||[]).filter(p=>p.target);
     totalTarget = phasesWithTarget.reduce((a,p)=>a+(parseFloat(p.target)||0),0);
     if(totalTarget > 0){
-      // "today" in MYT: get current date as YYYY-MM-DD in MYT then parse
-      const nowMYT = new Date(new Date().toLocaleString('en-CA',{timeZone:'Asia/Kuala_Lumpur'}));
-      const todayMYT = parseMYT(nowMYT.toISOString().slice(0,10));
+      // "today" in MYT: offset UTC by +8 hours
+      const nowUTC = new Date();
+      const mytOffset = 8 * 60 * 60 * 1000;
+      const nowMYTms = nowUTC.getTime() + mytOffset;
+      const nowMYTDate = new Date(nowMYTms);
+      const todayYMD = nowMYTDate.toISOString().slice(0,10);
+      const todayMYT = parseMYT(todayYMD);
       saleEnded = todayMYT >= lastPhaseEnd;
       const daysLeft = Math.ceil((lastPhaseEnd-todayMYT)/(1000*60*60*24));
       if(curr.totalTicketsRegUnreg >= totalTarget){
