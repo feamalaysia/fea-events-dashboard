@@ -1616,9 +1616,34 @@ function fmtMYT(date){
 }
 function dayKey(dateStr){ return parseMYT(dateStr); }
 
-function buildDailySeries(rows, year, cat){
+function buildDailySeries(rows, year, cat, ticketMode, brandKey, settings){
+  ticketMode = ticketMode || 'reg';
   const yr = filteredByCategory(rows, cat); // rows already filtered by year+country
-  const dated = yr.map(r=>({date:dayKey(r['Date cleaned (DD/MM/YYYY)']), tickets:parseInt(r['Ticket Count'])||0})).filter(r=>!isNaN(r.date));
+  const isOne = v => v===1 || v==='1' || v===true || Number(v)===1;
+
+  // get multipliers from settings
+  const mpt = settings && settings.membersPerTeam ? parseInt(settings.membersPerTeam)+1 : 3; // tsr team: captain + members
+  const dm  = settings && settings.doublesMembers ? parseInt(settings.doublesMembers)+1 : 2;  // rl doubles
+  const trm = settings && settings.teamRelayMembers ? parseInt(settings.teamRelayMembers)+1 : 4; // rl relay
+
+  function ticketsForRow(r){
+    if(ticketMode !== 'regunreg') return parseInt(r['Ticket Count'])||0;
+    // reg+unreg: count by captain × team size, or individual ticket count
+    const cat = r['Category'];
+    if(brandKey==='tsr' && cat==='Team'){
+      return isOne(r['Team Captain']) ? mpt : 0;
+    }
+    if(brandKey==='rl' && cat==='Doubles'){
+      return isOne(r['Doubles Captain']) ? dm : 0;
+    }
+    if(brandKey==='rl' && cat==='Team Relay'){
+      return isOne(r['Team Relay Captain']) ? trm : 0;
+    }
+    // individuals/singles/TMR: use ticket count as normal
+    return parseInt(r['Ticket Count'])||0;
+  }
+
+  const dated = yr.map(r=>({date:dayKey(r['Date cleaned (DD/MM/YYYY)']), tickets:ticketsForRow(r)})).filter(r=>!isNaN(r.date));
   dated.sort((a,b)=>a.date-b.date);
   const start = dated.length?dated[0].date:new Date();
   const byDay = {};
@@ -1797,14 +1822,8 @@ function renderCumChart(brandKey, rows, year, compareYear, cat, country, compare
   document.getElementById('legendDaily1_'+brandKey).innerHTML = years.map((y,i)=>`<span><span class="dot" style="background:${PALETTE[i]}"></span>${y}${countries[i]!=='all'?' ('+countries[i]+')':''}</span>`).join('');
   const seriesList = years.map((y,i)=>{
     const filtered = rows.filter(r=>getEventYear(r)===String(y)&&(countries[i]==='all'||r['Country']===countries[i]));
-    return buildDailySeries(filtered, y, cat);
+    return buildDailySeries(filtered, y, cat, ticketMode, brandKey, settings);
   });
-  // compute unreg per year to add on last day if regunreg mode
-  const unregByYear = ticketMode==='regunreg' ? years.map((y,i)=>{
-    const filtered = rows.filter(r=>getEventYear(r)===String(y)&&(countries[i]==='all'||r['Country']===countries[i]));
-    const m = computeBrandYearMetrics(filtered, y, brandKey, settings);
-    return m.unreg || 0;
-  }) : years.map(()=>0);
   const maxDay = Math.max(1, ...seriesList.map(s=>s.lastDayWithData));
   const labels = Array.from({length:maxDay+1}, (_,i)=>"Day "+i);
   const datasets = seriesList.map((s,i)=>{
@@ -1812,9 +1831,7 @@ function renderCumChart(brandKey, rows, year, compareYear, cat, country, compare
     const data = labels.map((_,d)=>{
       if(d > s.lastDayWithData) return null;
       cum += (s.byDay[d]||0);
-      // add unreg gap on last day with data
-      const val = (d===s.lastDayWithData && ticketMode==='regunreg') ? cum + unregByYear[i] : cum;
-      return val;
+      return cum;
     });
     return {label:String(years[i]), data, borderColor:PALETTE[i], backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.15, spanGaps:false};
   });
@@ -1847,23 +1864,13 @@ function renderDailyDeltaChart(brandKey, rows, year, compareYear, cat, country, 
   document.getElementById('legendDaily2_'+brandKey).innerHTML = years.map((y,i)=>`<span><span class="dot" style="background:${PALETTE[i]}"></span>${y}${countries[i]!=='all'?' ('+countries[i]+')':''}</span>`).join('');
   const seriesList = years.map((y,i)=>{
     const filtered = rows.filter(r=>getEventYear(r)===String(y)&&(countries[i]==='all'||r['Country']===countries[i]));
-    return buildDailySeries(filtered, y, cat);
+    return buildDailySeries(filtered, y, cat, ticketMode, brandKey, settings);
   });
-  // add unreg on last day for regunreg mode
-  const unregByYear = ticketMode==='regunreg' ? years.map((y,i)=>{
-    const filtered = rows.filter(r=>getEventYear(r)===String(y)&&(countries[i]==='all'||r['Country']===countries[i]));
-    const m = computeBrandYearMetrics(filtered, y, brandKey, settings);
-    return m.unreg || 0;
-  }) : years.map(()=>0);
   const maxDay2 = Math.max(1, ...seriesList.map(s=>s.lastDayWithData));
   const labels2 = Array.from({length:maxDay2+1}, (_,i)=>"Day "+i);
   const datasets2 = seriesList.map((s,i)=>({
     label:String(years[i]),
-    data: labels2.map((_,d)=>{
-      if(d > s.lastDayWithData) return null;
-      const base = s.byDay[d]||0;
-      return (d===s.lastDayWithData && ticketMode==='regunreg') ? base + unregByYear[i] : base;
-    }),
+    data: labels2.map((_,d)=> d > s.lastDayWithData ? null : (s.byDay[d]||0)),
     borderColor:PALETTE[i], backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:0.2, spanGaps:false
   }));
   const annotations = buildPhaseAnnotations(rows, years, seriesList);
