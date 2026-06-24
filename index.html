@@ -235,7 +235,8 @@ async function loadAll(){
   }));
 
   const totalRows = Object.values(brandData).reduce((a,b)=>a+b.rows.length,0);
-  document.getElementById('statusLineOverview').textContent = "Live — " + totalRows + " total records · updated " + new Date().toLocaleTimeString();
+  const myt = new Date().toLocaleTimeString('en-MY',{timeZone:'Asia/Kuala_Lumpur',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('statusLineOverview').textContent = "Live — " + totalRows + " total records · updated " + myt + " MYT";
 
   renderOverview();
   // after data loads, re-render any already-visited brand pages with fresh data
@@ -640,7 +641,8 @@ function renderBrandPage(brandKey){
   }
   const data = brandData[brandKey];
   if(!data) return;
-  document.getElementById('statusLine_'+brandKey).textContent = "Live — " + data.rows.length + " records · updated " + new Date().toLocaleTimeString();
+  const mytBrand = new Date().toLocaleTimeString('en-MY',{timeZone:'Asia/Kuala_Lumpur',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('statusLine_'+brandKey).textContent = "Live — " + data.rows.length + " records · updated " + mytBrand + " MYT";
 
   populateCountryFilter(document.getElementById('countryFilter_'+brandKey), data.rows);
   populateCountryFilter(document.getElementById('compareCountryFilter_'+brandKey), data.rows);
@@ -741,17 +743,19 @@ function renderSRBody(brandKey){
   let targetAchieved = false;
   let saleEnded = false;
   // get last phase end date from settings
-  const phasesWithEnd = (settings.phases||[]).filter(p=>p.end).sort((a,b)=>new Date(a.end)-new Date(b.end));
-  const lastPhaseEnd = phasesWithEnd.length ? new Date(phasesWithEnd[phasesWithEnd.length-1].end) : null;
+  const phasesWithEnd = (settings.phases||[]).filter(p=>p.end).sort((a,b)=>parseMYT(a.end)-parseMYT(b.end));
+  const lastPhaseEnd = phasesWithEnd.length ? parseMYT(phasesWithEnd[phasesWithEnd.length-1].end) : null;
 
   let shortBy = 0;
   if(showSettings && lastPhaseEnd){
     const phasesWithTarget = (settings.phases||[]).filter(p=>p.target);
     totalTarget = phasesWithTarget.reduce((a,p)=>a+(parseFloat(p.target)||0),0);
     if(totalTarget > 0){
-      const today = new Date();
-      saleEnded = today >= lastPhaseEnd;
-      const daysLeft = Math.ceil((lastPhaseEnd-today)/(1000*60*60*24));
+      // "today" in MYT: get current date as YYYY-MM-DD in MYT then parse
+      const nowMYT = new Date(new Date().toLocaleString('en-CA',{timeZone:'Asia/Kuala_Lumpur'}));
+      const todayMYT = parseMYT(nowMYT.toISOString().slice(0,10));
+      saleEnded = todayMYT >= lastPhaseEnd;
+      const daysLeft = Math.ceil((lastPhaseEnd-todayMYT)/(1000*60*60*24));
       if(curr.totalTicketsRegUnreg >= totalTarget){
         targetAchieved = true;
         runRateNeeded = 0;
@@ -766,7 +770,7 @@ function renderSRBody(brandKey){
   // total campaign days: first sale date → last phase end date (viewing year)
   let totalCampaignDays = null;
   if(showSettings && lastPhaseEnd && viewRows.length > 0){
-    const dates = viewRows.map(r=>new Date(r['Date cleaned (DD/MM/YYYY)'])).filter(d=>!isNaN(d));
+    const dates = viewRows.map(r=>parseMYT(r['Date cleaned (DD/MM/YYYY)'])).filter(d=>!isNaN(d));
     if(dates.length){
       const firstSaleDate = new Date(Math.min(...dates));
       totalCampaignDays = Math.round((lastPhaseEnd - firstSaleDate)/(1000*60*60*24));
@@ -776,7 +780,7 @@ function renderSRBody(brandKey){
   // compare year total days: first sale date → last available data date
   let cmpCampaignDays = null;
   if(compareYear && cmpRows && cmpRows.length > 0){
-    const cmpDates = cmpRows.map(r=>new Date(r['Date cleaned (DD/MM/YYYY)'])).filter(d=>!isNaN(d));
+    const cmpDates = cmpRows.map(r=>parseMYT(r['Date cleaned (DD/MM/YYYY)'])).filter(d=>!isNaN(d));
     if(cmpDates.length){
       const cmpFirst = new Date(Math.min(...cmpDates));
       const cmpLast = new Date(Math.max(...cmpDates));
@@ -952,16 +956,25 @@ function renderSubEventTable(brandKey, viewRows, cmpRows, year, compareYear, set
   function applyDateFilter(rows){
     const fromEl = document.getElementById('subEventDateFrom_'+brandKey);
     const toEl = document.getElementById('subEventDateTo_'+brandKey);
-    const fromVal = fromEl ? fromEl.value : '';
+    const fromVal = fromEl ? fromEl.value : ''; // YYYY-MM-DD
     const toVal = toEl ? toEl.value : '';
     if(!fromVal && !toVal) return rows;
     return rows.filter(r=>{
       const d = r['Date cleaned (DD/MM/YYYY)'];
       if(!d) return false;
-      const rowDate = new Date(d);
-      if(isNaN(rowDate)) return false;
-      if(fromVal && rowDate < new Date(fromVal)) return false;
-      if(toVal && rowDate > new Date(toVal)) return false;
+      // convert DD/MM/YYYY → YYYY-MM-DD for string comparison
+      const parts = d.toString().trim().split('/');
+      let rowYMD;
+      if(parts.length === 3){
+        rowYMD = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+      } else {
+        // fallback: try parsing as-is
+        const dt = new Date(d);
+        if(isNaN(dt)) return false;
+        rowYMD = dt.toISOString().slice(0,10);
+      }
+      if(fromVal && rowYMD < fromVal) return false;
+      if(toVal && rowYMD > toVal) return false;
       return true;
     });
   }
@@ -1101,7 +1114,7 @@ function renderCatPhaseTable(brandKey, rows, year){
   const phaseFirstDate = {};
   rows.forEach(r=>{
     const p = r['Phase']; if(!p) return;
-    const d = new Date(r['Date cleaned (DD/MM/YYYY)']);
+    const d = parseMYT(r['Date cleaned (DD/MM/YYYY)']);
     if(isNaN(d)) return;
     if(!phaseFirstDate[p] || d < phaseFirstDate[p]) phaseFirstDate[p] = d;
   });
@@ -1549,7 +1562,24 @@ function renderCohortTable(brandKey, rows, country){
 
 /* ---- Charts ---- */
 
-function dayKey(dateStr){ return new Date(dateStr); }
+// MYT = UTC+8. Parse dates as MYT midnight to avoid cross-day shifts.
+function parseMYT(dateStr){
+  if(!dateStr) return new Date(NaN);
+  const s = dateStr.toString().trim();
+  // DD/MM/YYYY
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(dmy) return new Date(`${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}T00:00:00+08:00`);
+  // YYYY-MM-DD
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(ymd) return new Date(`${s}T00:00:00+08:00`);
+  // fallback
+  return new Date(s);
+}
+function fmtMYT(date){
+  if(!date || isNaN(date)) return '';
+  return date.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kuala_Lumpur'});
+}
+function dayKey(dateStr){ return parseMYT(dateStr); }
 
 function buildDailySeries(rows, year, cat){
   const yr = filteredByCategory(rows, cat); // rows already filtered by year+country
@@ -1580,7 +1610,7 @@ function getPhaseOffsets(rows, year, startDate){
   const phaseFirstDate = {};
   yr.forEach(r=>{
     const phase = r['Phase']; if(!phase) return;
-    const d = new Date(r['Date cleaned (DD/MM/YYYY)']);
+    const d = parseMYT(r['Date cleaned (DD/MM/YYYY)']);
     if(isNaN(d)) return;
     if(!phaseFirstDate[phase] || d < phaseFirstDate[phase]) phaseFirstDate[phase] = d;
   });
@@ -1689,7 +1719,7 @@ function renderCumChart(brandKey, rows, year, compareYear, cat, country, compare
       title: items=>{
         const d = items[0].dataIndex;
         const dates = seriesList.map(s=>s.dayToDate[d]).filter(Boolean);
-        const dateStrs = dates.map(dt=>dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}));
+        const dateStrs = dates.map(dt=>dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kuala_Lumpur'}));
         const unique = [...new Set(dateStrs)];
         return `Day ${d}${unique.length ? ' — ' + unique.join(' / ') : ''}`;
       }
@@ -1723,7 +1753,7 @@ function renderDailyDeltaChart(brandKey, rows, year, compareYear, cat, country, 
       title: items=>{
         const d = items[0].dataIndex;
         const dates = seriesList.map(s=>s.dayToDate[d]).filter(Boolean);
-        const dateStrs = dates.map(dt=>dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}));
+        const dateStrs = dates.map(dt=>dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kuala_Lumpur'}));
         const unique = [...new Set(dateStrs)];
         return `Day ${d}${unique.length ? ' — ' + unique.join(' / ') : ''}`;
       }
@@ -1752,7 +1782,7 @@ function renderPaceChart(brandKey, rows, year, settings){
   const unregGap = metrics.unreg || 0;
 
   const phases = (settings.phases||[]).filter(p=>p.name && p.start && p.end && p.target)
-    .map(p=>({...p, startOffset:Math.round((new Date(p.start)-start)/(1000*60*60*24)), endOffset:Math.round((new Date(p.end)-start)/(1000*60*60*24))}))
+    .map(p=>({...p, startOffset:Math.round((parseMYT(p.start)-start)/(1000*60*60*24)), endOffset:Math.round((parseMYT(p.end)-start)/(1000*60*60*24))}))
     .sort((a,b)=>a.startOffset-b.startOffset);
 
   const maxDay = Math.max(1, lastDayWithData, ...phases.map(p=>p.endOffset));
@@ -1795,7 +1825,7 @@ function renderPaceChart(brandKey, rows, year, settings){
             title: items=>{
               const d = items[0].dataIndex;
               const dt = dayToDate[d];
-              const dateStr = dt ? dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '';
+              const dateStr = dt ? dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kuala_Lumpur'}) : '';
               return `Day ${d}${dateStr ? ' — ' + dateStr : ''}`;
             },
             afterBody: function(items){
