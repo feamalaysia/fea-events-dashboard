@@ -863,7 +863,7 @@ function renderSRBody(brandKey){
     }
     const progressCard = pctToTarget!==null ? `<div class="metric"><div class="label">% to target (reg+unreg)</div><div class="val">${pctToTarget.toFixed(1)}%</div><div style="background:var(--panel-2);border-radius:4px;height:8px;margin-top:8px;overflow:hidden;"><div style="height:100%;width:${pctToTarget}%;background:${pctToTarget>=100?'var(--good)':'var(--accent2)'};border-radius:4px;transition:width 0.4s;"></div></div><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">${fmtNum(curr.totalTicketsRegUnreg)} / ${fmtNum(totalTarget)}</div></div>` : '';
     const runRateCard = showSettings ? `<div class="metric"><div class="label">${saleEnded && !targetAchieved ? 'Final result' : 'Daily run rate needed (overall)'}</div><div class="val" style="color:${targetAchieved?'var(--good)':saleEnded?'var(--bad)':'var(--text)'}">${targetAchieved ? '🎉 Target achieved!' : saleEnded ? `Short by ${fmtNum(shortBy)}` : runRateNeeded!==null ? fmtNum(runRateNeeded)+'/day' : 'set phase targets'}</div></div>` : '';
-    const campaignDaysCard = totalCampaignDays!==null ? `<div class="metric"><div class="label">Total campaign days (Day 0 → ${showSettings && lastPhaseEnd ? 'event date' : 'last data'})</div><div class="val">${totalCampaignDays} days</div>${cmpCampaignDays!==null?`<div class="delta flat">${compareYear}: ${cmpCampaignDays} days (data range)</div>`:''}</div>` : '';
+    const campaignDaysCard = totalCampaignDays!==null ? `<div class="metric"><div class="label">Total ticket sales days (Day 0 → ${showSettings && lastPhaseEnd ? 'event date' : 'last data'})</div><div class="val">${totalCampaignDays} days</div>${cmpCampaignDays!==null?`<div class="delta flat">${compareYear}: ${cmpCampaignDays} days (data range)</div>`:''}</div>` : '';
     // helper for manual input cards with pencil icon
     function manualCard(label, fieldKey, value, cmpValue, cmpYear, cmpCountry, fmt, disclaimer, unit, lastUpdated){
       const displayVal = value !== null ? fmt(value)+(unit||'') : '<span style="color:var(--text-dim);font-size:14px;">Not set</span>';
@@ -913,7 +913,22 @@ function renderSRBody(brandKey){
       card('Registration revenue', curr.regRev, cmp?cmp.regRev:null, fmtMoney) +
       card('Add-on revenue', curr.prodRev, cmp?cmp.prodRev:null, fmtMoney) +
       card('Avg ticket price', avgPriceCurr, avgPriceCmp, fmtMoney) +
-      progressCard + runRateCard + campaignDaysCard + convCard + regInterestCard + totalDbCard;
+      campaignDaysCard + convCard + regInterestCard + totalDbCard;
+
+    // target + run rate in separate centred section below
+    const targetSection = document.getElementById('targetSection_'+brandKey) || (() => {
+      const s = document.createElement('div'); s.id = 'targetSection_'+brandKey; metricsEl.after(s); return s;
+    })();
+    if(progressCard || runRateCard){
+      targetSection.innerHTML = `
+        <div style="border-top:1px solid var(--line); margin:0 0 12px 0;"></div>
+        <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+          ${progressCard ? `<div style="flex:1; min-width:220px; max-width:340px;">${progressCard}</div>` : ''}
+          ${runRateCard ? `<div style="flex:1; min-width:220px; max-width:340px;">${runRateCard}</div>` : ''}
+        </div>`;
+    } else {
+      targetSection.innerHTML = '';
+    }
   }catch(e){ console.error('metrics render',e.message, e.stack); }
 
   try{ renderPhaseTable(brandKey, viewRows, cmpRows, year, compareYear, settings, document.getElementById('phaseTicketFilter_'+brandKey).value); }catch(e){ console.error('renderPhaseTable',e.message, e.stack); }
