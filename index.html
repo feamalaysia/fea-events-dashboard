@@ -267,28 +267,37 @@ function renderTSR2Sections(brandKey, year, compareYear, country){
   const yr1 = tsr1Rows.filter(r=>getEventYear(r)===String(year) && (country==='all'||r['Country']===country));
 
   renderTrafficSection(brandKey, yr2, cmpYr2, yr1, year, compareYear);
-  renderEDMSection(brandKey, yr2, year);
+  renderEDMSection(brandKey, yr2, year, compareYear, allRows);
   renderSocialSection(brandKey, yr2, year);
 }
 
 // ---- TRAFFIC ----
 function renderTrafficSection(brandKey, rows, cmpRows, tsr1Rows, year, compareYear){
-  // overview metrics
+  // overview metrics with compare delta
   const totalSessions = rows.reduce((a,r)=>a+(parseFloat(r['Sessions'])||0),0);
   const totalUsers = rows.reduce((a,r)=>a+(parseFloat(r['Users'])||0),0);
+  const cmpSessions = cmpRows ? cmpRows.reduce((a,r)=>a+(parseFloat(r['Sessions'])||0),0) : null;
+  const cmpUsers = cmpRows ? cmpRows.reduce((a,r)=>a+(parseFloat(r['Users'])||0),0) : null;
+
+  function deltaSpanLocal(curr, prev){
+    if(prev===null||prev===undefined) return '';
+    const pct = prev!==0?((curr-prev)/prev*100):null;
+    const up = curr>=prev;
+    return `<div class="delta ${up?'up':'down'}">${up?'▲':'▼'} vs ${compareYear}: ${fmtNum(prev)}${pct!==null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':''}</div>`;
+  }
+
   const metricsEl = document.getElementById('trafficMetrics_'+brandKey);
   if(metricsEl) metricsEl.innerHTML =
-    `<div class="metric"><div class="label">Total Sessions</div><div class="val">${fmtNum(totalSessions)}</div></div>` +
-    `<div class="metric"><div class="label">Total Users</div><div class="val">${fmtNum(totalUsers)}</div></div>`;
+    `<div class="metric"><div class="label">Total Sessions</div><div class="val">${fmtNum(totalSessions)}</div>${deltaSpanLocal(totalSessions,cmpSessions)}</div>` +
+    `<div class="metric"><div class="label">Total Users</div><div class="val">${fmtNum(totalUsers)}</div>${deltaSpanLocal(totalUsers,cmpUsers)}</div>`;
 
   // build daily series for sessions
   function buildSessionSeries(rows){
-    const byDay={}, dayToDate={};
+    const byDay={}, byDayUsers={}, dayToDate={};
     const dated = rows.map(r=>({date:parseMYT(r['Date cleaned (DD/MM/YYYY)']), sessions:parseFloat(r['Sessions'])||0, users:parseFloat(r['Users'])||0})).filter(r=>!isNaN(r.date));
     dated.sort((a,b)=>a.date-b.date);
     if(!dated.length) return {byDay:{}, byDayUsers:{}, lastDayWithData:0, start:new Date(), dayToDate:{}};
     const start = dated[0].date;
-    const byDayUsers={};
     let last=0;
     dated.forEach(r=>{
       const d=Math.round((r.date-start)/(1000*60*60*24));
@@ -304,16 +313,25 @@ function renderTrafficSection(brandKey, rows, cmpRows, tsr1Rows, year, compareYe
   const s2 = cmpRows ? buildSessionSeries(cmpRows) : null;
   const maxDay = Math.max(1, s1.lastDayWithData, s2?s2.lastDayWithData:0);
   const labels = Array.from({length:maxDay+1},(_,i)=>'Day '+i);
+  const years = [year, compareYear].filter(Boolean);
+  const series = [s1, s2].filter(Boolean);
 
   // legend
   const legendEl = document.getElementById('legendTraffic_'+brandKey);
-  if(legendEl) legendEl.innerHTML = [year, compareYear&&compareYear].filter(Boolean).map((y,i)=>`<span><span class="dot" style="background:${PALETTE[i]}"></span>${y}</span>`).join('');
+  if(legendEl) legendEl.innerHTML = years.map((y,i)=>`<span><span class="dot" style="background:${PALETTE[i]}"></span>${y}</span>`).join('');
 
-  // traffic chart
+  // traffic chart with phase annotations and tooltip
   const trafficCtx = document.getElementById('trafficChart_'+brandKey);
   destroyChart('trafficChart_'+brandKey);
-  const series = [s1, s2].filter(Boolean);
-  const years = [year, compareYear].filter(Boolean);
+  const trafficAnnotations = buildPhaseAnnotations(brandData['tsr'].rows, years, series);
+  const trafficOpts = chartOptsWithAnnotations(trafficAnnotations);
+  trafficOpts.plugins = trafficOpts.plugins || {};
+  trafficOpts.plugins.tooltip = {callbacks:{title:items=>{
+    const d=items[0].dataIndex;
+    const dates=series.map(s=>s.dayToDate[d]).filter(Boolean);
+    const strs=[...new Set(dates.map(dt=>fmtMYT(dt)))];
+    return `Day ${d}${strs.length?' — '+strs.join(' / '):''}`;
+  }}};
   chartInstances['trafficChart_'+brandKey] = new Chart(trafficCtx, {
     type:'line',
     data:{labels, datasets: series.map((s,i)=>({
@@ -321,69 +339,127 @@ function renderTrafficSection(brandKey, rows, cmpRows, tsr1Rows, year, compareYe
       data: labels.map((_,d)=>d>s.lastDayWithData?null:(s.byDay[d]||0)),
       borderColor:PALETTE[i], backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.15, spanGaps:false
     }))},
-    options:{...chartOptsWithAnnotations(buildPhaseAnnotations(brandData['tsr'].rows, years, series)),
-      plugins:{tooltip:{callbacks:{title:items=>{
-        const d=items[0].dataIndex;
-        const dates=series.map(s=>s.dayToDate[d]).filter(Boolean);
-        const strs=dates.map(dt=>fmtMYT(dt));
-        return `Day ${d}${strs.length?' — '+[...new Set(strs)].join(' / '):''}`;
-      }}}}
-    }
+    options: trafficOpts
   });
 
-  // CR chart: daily tickets (tsr1) / daily users (tsr2)
+  // CR chart: match by actual date between TSR1 and TSR2
   const crCtx = document.getElementById('crChart_'+brandKey);
   destroyChart('crChart_'+brandKey);
-  // build daily ticket series from tsr1
-  const tsr1Series = buildDailySeries(tsr1Rows, year, 'all', 'reg', brandKey, brandData[brandKey].settings||{});
+
+  // build date→tickets map from TSR1
+  const tsr1ByDate = {};
+  tsr1Rows.forEach(r=>{
+    const d = parseMYT(r['Date cleaned (DD/MM/YYYY)']);
+    if(isNaN(d)) return;
+    const key = d.toISOString().slice(0,10);
+    tsr1ByDate[key] = (tsr1ByDate[key]||0) + (parseInt(r['Ticket Count'])||0);
+  });
+
+  // build date→users map from TSR2
+  const tsr2ByDate = {};
+  rows.forEach(r=>{
+    const d = parseMYT(r['Date cleaned (DD/MM/YYYY)']);
+    if(isNaN(d)) return;
+    const key = d.toISOString().slice(0,10);
+    tsr2ByDate[key] = (tsr2ByDate[key]||0) + (parseFloat(r['Users'])||0);
+  });
+
+  // align by s1 day index
   const crData = labels.map((_,d)=>{
-    const users = s1.byDayUsers[d]||0;
-    const tickets = tsr1Series.byDay[d]||0;
     if(d > s1.lastDayWithData) return null;
+    const dt = s1.dayToDate[d];
+    if(!dt) return 0;
+    const key = new Date(dt.getTime()+8*60*60*1000).toISOString().slice(0,10);
+    const users = tsr2ByDate[key]||0;
+    const tickets = tsr1ByDate[key]||0;
     return users>0 ? parseFloat(((tickets/users)*100).toFixed(2)) : 0;
   });
+
   const legendCREl = document.getElementById('legendCR_'+brandKey);
   if(legendCREl) legendCREl.innerHTML = `<span><span class="dot" style="background:${PALETTE[0]}"></span>${year} CR%</span>`;
+
+  const crAnnotations = buildPhaseAnnotations(brandData['tsr'].rows, [year], [s1]);
+  const crOpts = chartOptsWithAnnotations(crAnnotations);
+  crOpts.plugins = crOpts.plugins||{};
+  crOpts.plugins.tooltip = {callbacks:{
+    title:items=>{
+      const d=items[0].dataIndex;
+      const dt=s1.dayToDate[d];
+      return `Day ${d}${dt?' — '+fmtMYT(dt):''}`;
+    },
+    label:ctx=>` CR: ${ctx.parsed.y.toFixed(2)}%`
+  }};
+  crOpts.scales = crOpts.scales||{};
+  crOpts.scales.x = {ticks:{color:'#8FA999'}, grid:{display:false}};
+  crOpts.scales.y = {ticks:{color:'#8FA999', callback:v=>v+'%'}, grid:{color:'rgba(143,169,153,0.15)'}};
   chartInstances['crChart_'+brandKey] = new Chart(crCtx, {
     type:'line',
-    data:{labels, datasets:[{label:'CR%', data:crData, borderColor:PALETTE[0], backgroundColor:'rgba(55,138,221,0.1)', borderWidth:2, pointRadius:0, tension:0.2, fill:true, spanGaps:false}]},
-    options:{responsive:true, maintainAspectRatio:false,
-      plugins:{tooltip:{callbacks:{label:ctx=>` CR: ${ctx.parsed.y.toFixed(2)}%`}}},
-      scales:{x:{ticks:{color:'#8FA999'}, grid:{display:false}}, y:{ticks:{color:'#8FA999', callback:v=>v+'%'}, grid:{color:'rgba(143,169,153,0.15)'}}}
-    }
+    data:{labels, datasets:[{label:'CR%', data:crData, borderColor:PALETTE[0], backgroundColor:'rgba(55,138,221,0.1)', borderWidth:2, pointRadius:0, tension:0.2, fill:true, spanGaps:true}]},
+    options: crOpts
   });
 }
 
 // ---- EDM ----
-function renderEDMSection(brandKey, rows, year){
+function removeOutliers(arr){
+  if(arr.length < 4) return arr;
+  const sorted = [...arr].sort((a,b)=>a-b);
+  const q1 = sorted[Math.floor(sorted.length*0.25)];
+  const q3 = sorted[Math.floor(sorted.length*0.75)];
+  const iqr = q3 - q1;
+  return arr.filter(v=>v>=q1-1.5*iqr && v<=q3+1.5*iqr);
+}
+
+function renderEDMSection(brandKey, rows, year, compareYear, allRows){
   const edm = rows.filter(r=>(r['[EDM] Content Name']||'').toString().trim());
-  // overview
+  const cmpEdm = compareYear ? allRows.filter(r=>getTSR2Year(r)===String(compareYear) && (r['[EDM] Content Name']||'').toString().trim()) : null;
+
+  // rates are already 0-1 decimals (e.g. 0.38 = 38%), NOT percentages
   const totalContent = edm.length;
   const totalDeliveries = edm.reduce((a,r)=>a+(parseFloat(r['[EDM] Total Deliveries'])||0),0);
-  const avgOpen = edm.length ? edm.reduce((a,r)=>a+(parseFloat(r['[EDM] Open rate'])||0),0)/edm.length : 0;
-  const avgClick = edm.length ? edm.reduce((a,r)=>a+(parseFloat(r['[EDM] Click rate'])||0),0)/edm.length : 0;
+  const openRates = edm.map(r=>parseFloat(r['[EDM] Open rate'])||0).filter(v=>v>0);
+  const clickRates = edm.map(r=>parseFloat(r['[EDM] Click rate'])||0).filter(v=>v>0);
+  const cleanOpen = removeOutliers(openRates);
+  const cleanClick = removeOutliers(clickRates);
+  const avgOpen = cleanOpen.length ? cleanOpen.reduce((a,b)=>a+b,0)/cleanOpen.length : 0;
+  const avgClick = cleanClick.length ? cleanClick.reduce((a,b)=>a+b,0)/cleanClick.length : 0;
+
+  const cmpContent = cmpEdm ? cmpEdm.length : null;
+  const cmpDeliveries = cmpEdm ? cmpEdm.reduce((a,r)=>a+(parseFloat(r['[EDM] Total Deliveries'])||0),0) : null;
+  const cmpOpenRates = cmpEdm ? removeOutliers(cmpEdm.map(r=>parseFloat(r['[EDM] Open rate'])||0).filter(v=>v>0)) : null;
+  const cmpClickRates = cmpEdm ? removeOutliers(cmpEdm.map(r=>parseFloat(r['[EDM] Click rate'])||0).filter(v=>v>0)) : null;
+  const cmpAvgOpen = cmpOpenRates&&cmpOpenRates.length ? cmpOpenRates.reduce((a,b)=>a+b,0)/cmpOpenRates.length : null;
+  const cmpAvgClick = cmpClickRates&&cmpClickRates.length ? cmpClickRates.reduce((a,b)=>a+b,0)/cmpClickRates.length : null;
+
+  function deltaLine(curr, prev, fmt){ if(prev===null) return ''; const up=curr>=prev; return `<div class="delta ${up?'up':'down'}">${up?'▲':'▼'} ${compareYear}: ${fmt(prev)}</div>`; }
+
   const metricsEl = document.getElementById('edmMetrics_'+brandKey);
   if(metricsEl) metricsEl.innerHTML =
-    `<div class="metric"><div class="label">Total EDM Campaigns</div><div class="val">${fmtNum(totalContent)}</div></div>` +
-    `<div class="metric"><div class="label">Total Deliveries</div><div class="val">${fmtNum(totalDeliveries)}</div></div>` +
-    `<div class="metric"><div class="label">Avg Open Rate</div><div class="val">${(avgOpen*100).toFixed(1)}%</div></div>` +
-    `<div class="metric"><div class="label">Avg Click Rate</div><div class="val">${(avgClick*100).toFixed(1)}%</div></div>`;
+    `<div class="metric"><div class="label">Total EDM Campaigns</div><div class="val">${fmtNum(totalContent)}</div>${deltaLine(totalContent,cmpContent,fmtNum)}</div>` +
+    `<div class="metric"><div class="label">Total Deliveries</div><div class="val">${fmtNum(totalDeliveries)}</div>${deltaLine(totalDeliveries,cmpDeliveries,fmtNum)}</div>` +
+    `<div class="metric"><div class="label">Avg Open Rate <span style="font-size:10px;opacity:0.6;">(outliers removed)</span></div><div class="val">${(avgOpen*100).toFixed(1)}%</div>${deltaLine(avgOpen,cmpAvgOpen,v=>(v*100).toFixed(1)+'%')}</div>` +
+    `<div class="metric"><div class="label">Avg Click Rate <span style="font-size:10px;opacity:0.6;">(outliers removed)</span></div><div class="val">${(avgClick*100).toFixed(1)}%</div>${deltaLine(avgClick,cmpAvgClick,v=>(v*100).toFixed(1)+'%')}</div>`;
 
-  // chart
-  const names = edm.map(r=>(r['[EDM] Content Name']||'').toString().trim().substring(0,30));
+  // chart — rates are 0-1, multiply by 100 for display
+  const names = edm.map(r=>(r['[EDM] Content Name']||'').toString().trim());
+  const shortNames = names.map(n=>n.length>25?n.substring(0,25)+'…':n);
   const deliveries = edm.map(r=>parseFloat(r['[EDM] Total Deliveries'])||0);
-  const opens = edm.map(r=>parseFloat(r['[EDM] Open rate'])||0);
-  const clicks = edm.map(r=>parseFloat(r['[EDM] Click rate'])||0);
+  const opens = edm.map(r=>(parseFloat(r['[EDM] Open rate'])||0)*100);
+  const clicks = edm.map(r=>(parseFloat(r['[EDM] Click rate'])||0)*100);
   const edmCtx = document.getElementById('edmChart_'+brandKey);
   destroyChart('edmChart_'+brandKey);
   chartInstances['edmChart_'+brandKey] = new Chart(edmCtx, {
-    data:{labels:names, datasets:[
+    data:{labels:shortNames, datasets:[
       {type:'bar', label:'Deliveries', data:deliveries, backgroundColor:'rgba(55,138,221,0.7)', borderRadius:3, yAxisID:'yDel', order:2},
-      {type:'line', label:'Open Rate', data:opens.map(v=>v*100), borderColor:'#6FCF97', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yRate', order:1, tension:0.2},
-      {type:'line', label:'Click Rate', data:clicks.map(v=>v*100), borderColor:'#FF6A3D', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yRate', order:1, tension:0.2}
+      {type:'line', label:'Open Rate', data:opens, borderColor:'#6FCF97', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yRate', order:1, tension:0.2},
+      {type:'line', label:'Click Rate', data:clicks, borderColor:'#FF6A3D', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yRate', order:1, tension:0.2}
     ]},
     options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}}},
+      plugins:{
+        legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}},
+        tooltip:{callbacks:{
+          title: items => names[items[0].dataIndex] || shortNames[items[0].dataIndex]
+        }}
+      },
       scales:{
         x:{ticks:{color:'#8FA999', maxRotation:45, font:{size:10}}, grid:{display:false}},
         yDel:{position:'left', ticks:{color:'#378ADD', callback:v=>fmtNum(v)}, grid:{color:'rgba(143,169,153,0.15)'}, title:{display:true, text:'Deliveries', color:'#378ADD', font:{size:10}}},
@@ -392,8 +468,8 @@ function renderEDMSection(brandKey, rows, year){
     }
   });
 
-  // top 3 by open rate
-  const top3 = [...edm].sort((a,b)=>(parseFloat(b['[EDM] Open rate'])||0)-(parseFloat(a['[EDM] Open rate'])||0)).slice(0,3);
+  // top 3 by open rate (outlier-safe)
+  const top3 = [...edm].filter(r=>parseFloat(r['[EDM] Open rate'])||0).sort((a,b)=>(parseFloat(b['[EDM] Open rate'])||0)-(parseFloat(a['[EDM] Open rate'])||0)).slice(0,3);
   const top3El = document.getElementById('edmTop3_'+brandKey);
   if(top3El) top3El.innerHTML = `<h2>Top 3 EDM by Open Rate</h2><div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;">` +
     top3.map((r,i)=>`<div class="metric" style="margin:0;"><div class="label">#${i+1} ${(r['[EDM] Content Name']||'').toString().trim()}</div>
@@ -405,15 +481,24 @@ function renderEDMSection(brandKey, rows, year){
 
 // ---- SOCIAL ----
 function renderSocialSection(brandKey, rows, year){
-  // overview
-  const fbReach = rows.reduce((a,r)=>a+(parseFloat(r['[Social] FB Reach'])||0),0);
-  const fbViews = rows.reduce((a,r)=>a+(parseFloat(r['[Social] FB Views'])||0),0);
-  const fbRows = rows.filter(r=>parseFloat(r['[Social] FB Interaction Rate'])||0);
-  const avgFBRate = fbRows.length ? fbRows.reduce((a,r)=>a+(parseFloat(r['[Social] FB Interaction Rate'])||0),0)/fbRows.length : 0;
-  const igReach = rows.reduce((a,r)=>a+(parseFloat(r['[Social] IG Reach'])||0),0);
-  const igViews = rows.reduce((a,r)=>a+(parseFloat(r['[Social] IG Views'])||0),0);
-  const igRows = rows.filter(r=>parseFloat(r['[Social] IG Interaction Rate'])||0);
-  const avgIGRate = igRows.length ? igRows.reduce((a,r)=>a+(parseFloat(r['[Social] IG Interaction Rate'])||0),0)/igRows.length : 0;
+  // column names have newlines
+  const fbCN = '[Social]\nFB Content Name';
+  const fbReachC = '[Social]\nFB Reach';
+  const fbViewsC = '[Social]\n FB \nViews';
+  const fbIRC = '[Social]\n FB \nInteraction Rate';
+  const igCN = '[Social]\nIG Content Name';
+  const igReachC = '[Social]\nIG Reach';
+  const igViewsC = '[Social]\nIG\nViews';
+  const igIRC = '[Social]\nIG\nInteraction Rate';
+
+  const fbReach = rows.reduce((a,r)=>a+(parseFloat(r[fbReachC])||0),0);
+  const fbViews = rows.reduce((a,r)=>a+(parseFloat(r[fbViewsC])||0),0);
+  const fbIRRows = rows.filter(r=>parseFloat(r[fbIRC])||0);
+  const avgFBRate = fbIRRows.length ? fbIRRows.reduce((a,r)=>a+(parseFloat(r[fbIRC])||0),0)/fbIRRows.length : 0;
+  const igReach = rows.reduce((a,r)=>a+(parseFloat(r[igReachC])||0),0);
+  const igViews = rows.reduce((a,r)=>a+(parseFloat(r[igViewsC])||0),0);
+  const igIRRows = rows.filter(r=>parseFloat(r[igIRC])||0);
+  const avgIGRate = igIRRows.length ? igIRRows.reduce((a,r)=>a+(parseFloat(r[igIRC])||0),0)/igIRRows.length : 0;
 
   const metricsEl = document.getElementById('socialMetrics_'+brandKey);
   if(metricsEl) metricsEl.innerHTML =
@@ -423,19 +508,21 @@ function renderSocialSection(brandKey, rows, year){
     `<div class="metric"><div class="label">IG Reach</div><div class="val">${fmtNum(igReach)}</div><div class="delta flat">Avg IR: ${(avgIGRate*100).toFixed(2)}%</div></div>`;
 
   // IG chart
-  const igData = rows.filter(r=>(r['[Social] IG Content Name']||'').toString().trim());
-  const igNames = igData.map(r=>(r['[Social] IG Content Name']||'').toString().trim().substring(0,25));
-  const igViewsArr = igData.map(r=>parseFloat(r['[Social] IG Views'])||0);
-  const igIR = igData.map(r=>(parseFloat(r['[Social] IG Interaction Rate'])||0)*100);
+  const igData = rows.filter(r=>(r[igCN]||'').toString().trim());
+  const igNames = igData.map(r=>(r[igCN]||'').toString().trim());
+  const igShort = igNames.map(n=>n.length>25?n.substring(0,25)+'…':n);
+  const igViewsArr = igData.map(r=>parseFloat(r[igViewsC])||0);
+  const igIR = igData.map(r=>(parseFloat(r[igIRC])||0)*100);
   const igCtx = document.getElementById('igChart_'+brandKey);
   destroyChart('igChart_'+brandKey);
   chartInstances['igChart_'+brandKey] = new Chart(igCtx, {
-    data:{labels:igNames, datasets:[
+    data:{labels:igShort, datasets:[
       {type:'bar', label:'Views', data:igViewsArr, backgroundColor:'rgba(111,207,151,0.7)', borderRadius:3, yAxisID:'yViews', order:2},
       {type:'line', label:'Interaction Rate', data:igIR, borderColor:'#FF6A3D', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yIR', order:1, tension:0.2}
     ]},
     options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}}},
+      plugins:{legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}},
+        tooltip:{callbacks:{title:items=>igNames[items[0].dataIndex]||igShort[items[0].dataIndex]}}},
       scales:{
         x:{ticks:{color:'#8FA999', maxRotation:45, font:{size:10}}, grid:{display:false}},
         yViews:{position:'left', ticks:{color:'#6FCF97', callback:v=>fmtNum(v)}, grid:{color:'rgba(143,169,153,0.15)'}, title:{display:true, text:'Views', color:'#6FCF97', font:{size:10}}},
@@ -445,19 +532,21 @@ function renderSocialSection(brandKey, rows, year){
   });
 
   // FB chart
-  const fbData = rows.filter(r=>(r['[Social] FB Content Name']||'').toString().trim());
-  const fbNames = fbData.map(r=>(r['[Social] FB Content Name']||'').toString().trim().substring(0,25));
-  const fbViewsArr = fbData.map(r=>parseFloat(r['[Social] FB Views'])||0);
-  const fbIR = fbData.map(r=>(parseFloat(r['[Social] FB Interaction Rate'])||0)*100);
+  const fbData = rows.filter(r=>(r[fbCN]||'').toString().trim());
+  const fbNames = fbData.map(r=>(r[fbCN]||'').toString().trim());
+  const fbShort = fbNames.map(n=>n.length>25?n.substring(0,25)+'…':n);
+  const fbViewsArr = fbData.map(r=>parseFloat(r[fbViewsC])||0);
+  const fbIR = fbData.map(r=>(parseFloat(r[fbIRC])||0)*100);
   const fbCtx = document.getElementById('fbChart_'+brandKey);
   destroyChart('fbChart_'+brandKey);
   chartInstances['fbChart_'+brandKey] = new Chart(fbCtx, {
-    data:{labels:fbNames, datasets:[
+    data:{labels:fbShort, datasets:[
       {type:'bar', label:'Views', data:fbViewsArr, backgroundColor:'rgba(55,138,221,0.7)', borderRadius:3, yAxisID:'yViews', order:2},
       {type:'line', label:'Interaction Rate', data:fbIR, borderColor:'#C77DFF', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'yIR', order:1, tension:0.2}
     ]},
     options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}}},
+      plugins:{legend:{labels:{color:'#EAF2EC', font:{size:11}, boxWidth:12}},
+        tooltip:{callbacks:{title:items=>fbNames[items[0].dataIndex]||fbShort[items[0].dataIndex]}}},
       scales:{
         x:{ticks:{color:'#8FA999', maxRotation:45, font:{size:10}}, grid:{display:false}},
         yViews:{position:'left', ticks:{color:'#378ADD', callback:v=>fmtNum(v)}, grid:{color:'rgba(143,169,153,0.15)'}, title:{display:true, text:'Views', color:'#378ADD', font:{size:10}}},
@@ -466,22 +555,22 @@ function renderSocialSection(brandKey, rows, year){
     }
   });
 
-  // top 5 IG
-  const top5IG = [...igData].sort((a,b)=>(parseFloat(b['[Social] IG Views'])||0)-(parseFloat(a['[Social] IG Views'])||0)).slice(0,5);
+  // top 5 IG by views
+  const top5IG = [...igData].sort((a,b)=>(parseFloat(b[igViewsC])||0)-(parseFloat(a[igViewsC])||0)).slice(0,5);
   const igTop5El = document.getElementById('igTop5_'+brandKey);
   if(igTop5El) igTop5El.innerHTML = `<h2>Top 5 IG by Views</h2>` +
     top5IG.map((r,i)=>`<div style="padding:8px 0; border-bottom:1px solid var(--line);">
-      <div style="font-size:12px; font-weight:600;">#${i+1} ${(r['[Social] IG Content Name']||'').toString().trim()}</div>
-      <div style="font-size:12px; color:var(--text-dim);">${fmtNum(parseFloat(r['[Social] IG Views'])||0)} views · ${((parseFloat(r['[Social] IG Interaction Rate'])||0)*100).toFixed(2)}% IR · ${r['Phase']||''}</div>
+      <div style="font-size:12px; font-weight:600;">#${i+1} ${(r[igCN]||'').toString().trim()}</div>
+      <div style="font-size:12px; color:var(--text-dim);">${fmtNum(parseFloat(r[igViewsC])||0)} views · ${((parseFloat(r[igIRC])||0)*100).toFixed(2)}% IR · ${r['Phase']||''}</div>
     </div>`).join('');
 
-  // top 5 FB
-  const top5FB = [...fbData].sort((a,b)=>(parseFloat(b['[Social] FB Views'])||0)-(parseFloat(a['[Social] FB Views'])||0)).slice(0,5);
+  // top 5 FB by views
+  const top5FB = [...fbData].sort((a,b)=>(parseFloat(b[fbViewsC])||0)-(parseFloat(a[fbViewsC])||0)).slice(0,5);
   const fbTop5El = document.getElementById('fbTop5_'+brandKey);
   if(fbTop5El) fbTop5El.innerHTML = `<h2>Top 5 FB by Views</h2>` +
     top5FB.map((r,i)=>`<div style="padding:8px 0; border-bottom:1px solid var(--line);">
-      <div style="font-size:12px; font-weight:600;">#${i+1} ${(r['[Social] FB Content Name']||'').toString().trim()}</div>
-      <div style="font-size:12px; color:var(--text-dim);">${fmtNum(parseFloat(r['[Social] FB Views'])||0)} views · ${((parseFloat(r['[Social] FB Interaction Rate'])||0)*100).toFixed(2)}% IR · ${r['Phase']||''}</div>
+      <div style="font-size:12px; font-weight:600;">#${i+1} ${(r[fbCN]||'').toString().trim()}</div>
+      <div style="font-size:12px; color:var(--text-dim);">${fmtNum(parseFloat(r[fbViewsC])||0)} views · ${((parseFloat(r[fbIRC])||0)*100).toFixed(2)}% IR · ${r['Phase']||''}</div>
     </div>`).join('');
 }
 
