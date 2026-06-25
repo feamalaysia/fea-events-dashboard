@@ -921,10 +921,10 @@ function renderSRBody(brandKey){
     })();
     if(progressCard || runRateCard){
       targetSection.innerHTML = `
-        <div style="border-top:1px solid var(--line); margin:0 0 12px 0;"></div>
-        <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
-          ${progressCard ? `<div style="flex:1; min-width:220px; max-width:340px;">${progressCard}</div>` : ''}
-          ${runRateCard ? `<div style="flex:1; min-width:220px; max-width:340px;">${runRateCard}</div>` : ''}
+        <div style="border-top:1px solid var(--line); margin:0 0 16px 0;"></div>
+        <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-bottom:22px;">
+          ${progressCard ? `<div style="flex:1; min-width:200px; max-width:320px;" class="metric">${progressCard.replace(/^<div class="metric">/, '').replace(/<\/div>$/, '')}</div>` : ''}
+          ${runRateCard ? `<div style="flex:1; min-width:200px; max-width:320px;" class="metric">${runRateCard.replace(/^<div class="metric">/, '').replace(/<\/div>$/, '')}</div>` : ''}
         </div>`;
     } else {
       targetSection.innerHTML = '';
