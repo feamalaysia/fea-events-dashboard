@@ -408,29 +408,45 @@ function renderTrafficSection(brandKey, rows, cmpRows, tsr1Rows, year, compareYe
     cmpTsr2ByDate[key] = (cmpTsr2ByDate[key]||0) + (parseFloat(r['Users'])||0);
   });
 
-  // build CR data per year, find first day with actual data
-  function buildCRData(seriesObj, tsr1Map, tsr2Map){
-    return labels.map((_,d)=>{
-      if(d > seriesObj.lastDayWithData) return null;
-      const dt = seriesObj.dayToDate[d];
-      if(!dt) return null;
-      const key = new Date(dt.getTime()+8*60*60*1000).toISOString().slice(0,10);
-      const users = tsr2Map[key]||0;
-      const tickets = tsr1Map[key]||0;
-      if(users===0 || tickets===0) return null;
-      return parseFloat(((tickets/users)*100).toFixed(2));
-    });
-  }
+  // build CR data keyed by calendar date (MYT YYYY-MM-DD), then map to 2026 day axis
+  const crByDate = {};
+  Object.keys(tsr2ByDate).forEach(dateKey=>{
+    const users = tsr2ByDate[dateKey]||0;
+    const tickets = tsr1ByDate[dateKey]||0;
+    if(users>0 && tickets>0) crByDate[dateKey] = parseFloat(((tickets/users)*100).toFixed(2));
+  });
 
-  const crData = buildCRData(s1, tsr1ByDate, tsr2ByDate);
-  const cmpCrData = (s2 && compareYear) ? buildCRData(s2, cmpTsr1ByDate, cmpTsr2ByDate) : null;
+  const cmpCrByDate = {};
+  Object.keys(cmpTsr2ByDate).forEach(dateKey=>{
+    const users = cmpTsr2ByDate[dateKey]||0;
+    const tickets = cmpTsr1ByDate[dateKey]||0;
+    if(users>0 && tickets>0) cmpCrByDate[dateKey] = parseFloat(((tickets/users)*100).toFixed(2));
+  });
 
-  // find first day with any CR data to trim x-axis
-  const allCrData = [...crData, ...(cmpCrData||[])];
+  // build CR arrays aligned to each year's own day axis
+  const crData = labels.map((_,d)=>{
+    if(d > s1.lastDayWithData) return null;
+    const dt = s1.dayToDate[d];
+    if(!dt) return null;
+    const key = new Date(dt.getTime()+8*60*60*1000).toISOString().slice(0,10);
+    return crByDate[key] ?? null;
+  });
+
+  const cmpCrData = (s2 && compareYear) ? labels.map((_,d)=>{
+    if(d > s2.lastDayWithData) return null;
+    const dt = s2.dayToDate[d];
+    if(!dt) return null;
+    const key = new Date(dt.getTime()+8*60*60*1000).toISOString().slice(0,10);
+    return cmpCrByDate[key] ?? null;
+  }) : null;
+
+  // trim x-axis to first day with CR data in EITHER year
+  const allCrData = crData.map((v,i)=>v ?? (cmpCrData?.[i] ?? null));
   const firstCrDay = allCrData.findIndex(v=>v!==null);
-  const crLabels = firstCrDay > 0 ? labels.slice(firstCrDay) : labels;
-  const crDataTrimmed = firstCrDay > 0 ? crData.slice(firstCrDay) : crData;
-  const cmpCrDataTrimmed = cmpCrData ? (firstCrDay > 0 ? cmpCrData.slice(firstCrDay) : cmpCrData) : null;
+  const trimFrom = firstCrDay > 0 ? firstCrDay : 0;
+  const crLabels = labels.slice(trimFrom);
+  const crDataTrimmed = crData.slice(trimFrom);
+  const cmpCrDataTrimmed = cmpCrData ? cmpCrData.slice(trimFrom) : null;
 
   const legendCREl = document.getElementById('legendCR_'+brandKey);
   if(legendCREl) legendCREl.innerHTML = years.map((y,i)=>`<span><span class="dot" style="background:${PALETTE[i]}"></span>${y} CR%</span>`).join('');
