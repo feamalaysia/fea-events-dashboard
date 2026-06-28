@@ -1207,6 +1207,19 @@ function brandPageHTML(brandKey){
     </div>
     </div>
     ` : ''}
+
+    <div class="panel" style="margin-top:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <h2 style="margin:0;">Campaign Notes</h2>
+        <span id="notesStatus_${brandKey}" style="font-size:11px; color:var(--good);"></span>
+      </div>
+      <p style="font-size:11px; color:var(--text-dim); margin:0 0 8px;" id="notesLabel_${brandKey}">Notes for — </p>
+      <textarea id="campaignNotes_${brandKey}" rows="5" style="width:100%; background:var(--panel-2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font-size:13px; resize:vertical; font-family:inherit;" placeholder="Write your campaign notes here..."></textarea>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+        <button onclick="saveCampaignNotes('${brandKey}')">Save Notes</button>
+        <span style="font-size:11px; color:var(--text-dim);" id="notesUpdated_${brandKey}"></span>
+      </div>
+    </div>
   `;
 }
 
@@ -1528,7 +1541,17 @@ function renderSRBody(brandKey){
   try{ renderDailyDeltaChart(brandKey, rows, year, compareYear, document.getElementById('catFilter2_'+brandKey).value, country, compareCountry, document.getElementById('ticketFilter2_'+brandKey).value); }catch(e){ console.error('renderDailyDeltaChart',e.message, e.stack); }
   if(showSettings) try{ renderPaceChart(brandKey, viewRows, year, settings); }catch(e){ console.error('renderPaceChart',e.message, e.stack); }
   try{ renderRevChart(brandKey, rows, year, compareYear, document.getElementById('catFilterRev_'+brandKey).value, country, compareCountry); }catch(e){ console.error('renderRevChart',e.message, e.stack); }
-  // show/hide TSR2 sections based on year
+  // load campaign notes for this year+country
+  const notesKey = `notes_${country}_${year}`;
+  const notesVal = (brandData[brandKey].settings||{})[notesKey] || '';
+  const notesEl = document.getElementById('campaignNotes_'+brandKey);
+  const notesLabelEl = document.getElementById('notesLabel_'+brandKey);
+  const notesUpdatedEl = document.getElementById('notesUpdated_'+brandKey);
+  const notesTsKey = `notes_${country}_${year}_ts`;
+  const notesTs = (brandData[brandKey].settings||{})[notesTsKey] || '';
+  if(notesEl) notesEl.value = notesVal;
+  if(notesLabelEl) notesLabelEl.textContent = `Notes for ${country} ${year}`;
+  if(notesUpdatedEl) notesUpdatedEl.textContent = notesTs ? `Last saved: ${notesTs}` : '';
   const tsr2El = document.getElementById('tsr2Sections_'+brandKey);
   if(tsr2El) tsr2El.style.display = parseInt(year) >= 2025 ? '' : 'none';
 
@@ -2718,6 +2741,28 @@ function toggleManualEdit(brandKey, fieldKey){
   if(isHidden){
     const input = document.getElementById('manualInput_'+brandKey+'_'+fieldKey);
     if(input) input.focus();
+  }
+}
+
+async function saveCampaignNotes(brandKey){
+  const year = document.getElementById('yearFilter_'+brandKey).value;
+  const country = document.getElementById('countryFilter_'+brandKey).value;
+  const notesEl = document.getElementById('campaignNotes_'+brandKey);
+  const statusEl = document.getElementById('notesStatus_'+brandKey);
+  const updatedEl = document.getElementById('notesUpdated_'+brandKey);
+  const val = notesEl ? notesEl.value : '';
+  const notesKey = `notes_${country}_${year}`;
+  const notesTsKey = `notes_${country}_${year}_ts`;
+  const ts = fmtMYT(new Date()) + ' ' + fmtMYTTime() + ' MYT';
+  const existing = brandData[brandKey].settings || {};
+  const settings = {...existing, [notesKey]: val, [notesTsKey]: ts};
+  brandData[brandKey].settings = settings;
+  try{
+    await fetch(BRANDS[brandKey].apiUrl, {method:"POST", body: JSON.stringify({type:"settings", data:settings})});
+    if(statusEl){ statusEl.textContent='Saved ✓'; setTimeout(()=>statusEl.textContent='',2000); }
+    if(updatedEl) updatedEl.textContent = `Last saved: ${ts}`;
+  }catch(e){
+    if(statusEl){ statusEl.textContent='Failed to save'; setTimeout(()=>statusEl.textContent='',2000); }
   }
 }
 
