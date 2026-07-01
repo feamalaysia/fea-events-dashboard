@@ -871,10 +871,27 @@ function renderOverview(){
     const currRows = filteredRows.filter(r=>getEventYear(r)===String(latestYear));
     const prevRows = prevYear ? filteredRows.filter(r=>getEventYear(r)===String(prevYear)) : null;
 
+    // compute event status for overview
+    function getEventStatusBadge(settings, country, year){
+      const phaseKey = `phases_${country}_${year}`;
+      const phases = (settings[phaseKey] || settings.phases || []).filter(p=>p.end);
+      if(!phases.length) return '';
+      const lastEnd = parseMYT(phases.sort((a,b)=>parseMYT(a.end)-parseMYT(b.end))[phases.length-1].end);
+      const nowMs = Date.now() + 8*60*60*1000;
+      const todayMYT = parseMYT(new Date(nowMs).toISOString().slice(0,10));
+      const ended = todayMYT >= lastEnd;
+      return ended
+        ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(143,169,153,0.2);color:var(--text-dim);">⚫ Completed</span>`
+        : `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(111,207,151,0.15);color:var(--good);">🟢 Ongoing</span>`;
+    }
+
+    const statusBadge = getEventStatusBadge(data.settings||{}, selectedCountry, latestYear);
+
     if(currRows.length === 0){
       grid.innerHTML += `<div style="margin-bottom:16px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
           <span style="font-size:13px; font-weight:600;">${b.label}</span>
+          ${statusBadge}
           <select id="${countryId}" onchange="renderOverview()" style="font-size:12px; padding:3px 6px;">${countryOpts}</select>
         </div>
         <div class="brand-card"><span class="nodata-tag">No data for selected country</span></div>
@@ -893,6 +910,7 @@ function renderOverview(){
     grid.innerHTML += `<div style="margin-bottom:16px;">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
         <span style="font-size:13px; font-weight:600;">${b.label}</span>
+        ${statusBadge}
         <select id="${countryId}" onchange="renderOverview()" style="font-size:12px; padding:3px 6px;">${countryOpts}</select>
       </div>
       <div class="overview-brand-row">
@@ -1019,7 +1037,7 @@ function brandPageHTML(brandKey){
     </div>
 
     <details class="settings" id="settingsPanel_${brandKey}">
-      <summary>Event Settings</summary>
+      <summary>Event Settings <span id="eventStatusBadge_${brandKey}" style="margin-left:8px; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; vertical-align:middle;"></span></summary>
       <div class="settings-body">
         <div class="target-grid">
           ${brandKey==='tsr' ? `<div><label>Additional members needed per team</label><input type="number" id="membersPerTeam_${brandKey}" placeholder="e.g. 2" /></div>` : ''}
@@ -1397,6 +1415,7 @@ function renderSRBody(brandKey){
   let totalTarget = 0;
   let targetAchieved = false;
   let saleEnded = false;
+  let daysLeftVal = null;
   // get last phase end date from settings
   const phasesWithEnd = (settings.phases||[]).filter(p=>p.end).sort((a,b)=>parseMYT(a.end)-parseMYT(b.end));
   const lastPhaseEnd = phasesWithEnd.length ? parseMYT(phasesWithEnd[phasesWithEnd.length-1].end) : null;
@@ -1415,6 +1434,7 @@ function renderSRBody(brandKey){
       const todayMYT = parseMYT(todayYMD);
       saleEnded = todayMYT >= lastPhaseEnd;
       const daysLeft = Math.ceil((lastPhaseEnd-todayMYT)/(1000*60*60*24));
+      daysLeftVal = saleEnded ? 0 : daysLeft;
       if(curr.totalTicketsRegUnreg >= totalTarget){
         targetAchieved = true;
         runRateNeeded = 0;
@@ -1464,6 +1484,7 @@ function renderSRBody(brandKey){
     }
     const progressCard = pctToTarget!==null ? `<div class="metric"><div class="label">% to target (reg+unreg)</div><div class="val">${pctToTarget.toFixed(1)}%</div><div style="background:var(--panel-2);border-radius:4px;height:8px;margin-top:8px;overflow:hidden;"><div style="height:100%;width:${pctToTarget}%;background:${pctToTarget>=100?'var(--good)':'var(--accent2)'};border-radius:4px;transition:width 0.4s;"></div></div><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">${fmtNum(curr.totalTicketsRegUnreg)} / ${fmtNum(totalTarget)}</div></div>` : '';
     const runRateCard = showSettings ? `<div class="metric"><div class="label">${saleEnded && !targetAchieved ? 'Final result' : 'Daily run rate needed (overall)'}</div><div class="val" style="color:${targetAchieved?'var(--good)':saleEnded?'var(--bad)':'var(--text)'}">${targetAchieved ? '🎉 Target achieved!' : saleEnded ? `Short by ${fmtNum(shortBy)}` : runRateNeeded!==null ? fmtNum(runRateNeeded)+'/day' : 'set phase targets'}</div></div>` : '';
+    const daysLeftCard = (showSettings && !saleEnded && !targetAchieved && daysLeftVal !== null) ? `<div class="metric"><div class="label">Days left to event</div><div class="val" style="color:${daysLeftVal<=7?'var(--bad)':daysLeftVal<=14?'var(--accent)':'var(--text)'}">${daysLeftVal} days</div><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">${fmtMYT(lastPhaseEnd)}</div></div>` : '';
     const campaignDaysCard = totalCampaignDays!==null ? `<div class="metric"><div class="label">Total ticket sales days (Day 0 → ${showSettings && lastPhaseEnd ? 'event date' : 'last data'})</div><div class="val">${totalCampaignDays} days</div>${cmpCampaignDays!==null?`<div class="delta flat">${compareYear}: ${cmpCampaignDays} days (data range)</div>`:''}</div>` : '';
     // helper for manual input cards with pencil icon
     function manualCard(label, fieldKey, value, cmpValue, cmpYear, cmpCountry, fmt, disclaimer, unit, lastUpdated){
@@ -1520,12 +1541,13 @@ function renderSRBody(brandKey){
     const targetSection = document.getElementById('targetSection_'+brandKey) || (() => {
       const s = document.createElement('div'); s.id = 'targetSection_'+brandKey; metricsEl.after(s); return s;
     })();
-    if(progressCard || runRateCard){
+    if(progressCard || runRateCard || daysLeftCard){
       targetSection.innerHTML = `
         <div style="border-top:1px solid var(--line); margin:0 0 16px 0;"></div>
         <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-bottom:22px;">
           ${progressCard ? `<div style="flex:1; min-width:200px; max-width:320px;" class="metric">${progressCard.replace(/^<div class="metric">/, '').replace(/<\/div>$/, '')}</div>` : ''}
           ${runRateCard ? `<div style="flex:1; min-width:200px; max-width:320px;" class="metric">${runRateCard.replace(/^<div class="metric">/, '').replace(/<\/div>$/, '')}</div>` : ''}
+          ${daysLeftCard ? `<div style="flex:1; min-width:200px; max-width:320px;" class="metric">${daysLeftCard.replace(/^<div class="metric">/, '').replace(/<\/div>$/, '')}</div>` : ''}
         </div>`;
     } else {
       targetSection.innerHTML = '';
@@ -1552,6 +1574,24 @@ function renderSRBody(brandKey){
   if(notesEl) notesEl.value = notesVal;
   if(notesLabelEl) notesLabelEl.textContent = `Notes for ${country} ${year}`;
   if(notesUpdatedEl) notesUpdatedEl.textContent = notesTs ? `Last saved: ${notesTs}` : '';
+
+  // update event status badge
+  const statusBadgeEl = document.getElementById('eventStatusBadge_'+brandKey);
+  if(statusBadgeEl){
+    if(!showSettings || !lastPhaseEnd){
+      statusBadgeEl.textContent = '';
+      statusBadgeEl.style.background = 'transparent';
+    } else if(saleEnded){
+      statusBadgeEl.textContent = '⚫ Completed';
+      statusBadgeEl.style.background = 'rgba(143,169,153,0.2)';
+      statusBadgeEl.style.color = 'var(--text-dim)';
+    } else {
+      statusBadgeEl.textContent = '🟢 Ongoing';
+      statusBadgeEl.style.background = 'rgba(111,207,151,0.15)';
+      statusBadgeEl.style.color = 'var(--good)';
+    }
+  }
+
   const tsr2El = document.getElementById('tsr2Sections_'+brandKey);
   if(tsr2El) tsr2El.style.display = parseInt(year) >= 2025 ? '' : 'none';
 
